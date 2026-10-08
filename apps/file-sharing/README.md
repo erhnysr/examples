@@ -28,6 +28,7 @@ Required variables:
 
     SHELBY_ACCOUNT_PRIVATE_KEY=your_private_key_here
     SHELBY_API_KEY=your_api_key_here
+    SHELBY_ACCOUNT_ADDRESS=your_account_address_here
     PORT=3000
 
 ## Usage
@@ -58,7 +59,8 @@ Open http://localhost:3000 in your browser.
     apps/file-sharing/
     src/
         server.ts      # Express server + Shelby SDK integration
-    public/            # Static frontend
+    public/
+        index.html     # Upload page, and the download page served for /d/:id links
     .env.example
     package.json
     README.md

@@ -4,7 +4,12 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream } from "node:stream/web";
-import { Account, AccountAddress, Ed25519PrivateKey, Network } from "@aptos-labs/ts-sdk";
+import {
+  Account,
+  AccountAddress,
+  Ed25519PrivateKey,
+  Network,
+} from "@aptos-labs/ts-sdk";
 import { ShelbyNodeClient } from "@shelby-protocol/sdk/node";
 import express from "express";
 import multer from "multer";
@@ -34,7 +39,9 @@ const signer = Account.fromPrivateKey({
   privateKey: new Ed25519PrivateKey(process.env.SHELBY_ACCOUNT_PRIVATE_KEY),
 });
 
-const accountAddress = AccountAddress.fromString(process.env.SHELBY_ACCOUNT_ADDRESS);
+const accountAddress = AccountAddress.fromString(
+  process.env.SHELBY_ACCOUNT_ADDRESS,
+);
 
 interface Drop {
   id: string;
@@ -60,16 +67,19 @@ function saveDB(db: Record<string, Drop>): void {
 }
 
 function updateDB(fn: (db: Record<string, Drop>) => void): Promise<void> {
-  dbWriteLock = dbWriteLock.then(() => {
+  const run = dbWriteLock.then(() => {
     const db = loadDB();
     fn(db);
     saveDB(db);
   });
-  return dbWriteLock;
+  // The caller still sees this update's error, but the lock itself always settles, so one
+  // failed update (a corrupt drops.json, say) does not skip every update queued after it.
+  dbWriteLock = run.catch(() => {});
+  return run;
 }
 
 function sanitizeFilename(name: string): string {
-  return name.replace(/[^\w.\-]/g, "_");
+  return name.replace(/[^\w.-]/g, "_");
 }
 
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -92,7 +102,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   }
 
   const { originalname, path: tmpPath, size } = req.file;
-  const safeName = originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const safeName = sanitizeFilename(originalname);
   const id = uuidv4().split("-")[0];
   const blobName = `file-sharing/${id}-${safeName}`;
   const fileData = fs.readFileSync(tmpPath);
@@ -120,7 +130,9 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       downloads: 0,
     };
 
-    await updateDB((db) => { db[id] = drop; });
+    await updateDB((db) => {
+      db[id] = drop;
+    });
 
     console.log(`✓ Uploaded ${originalname} → ${blobName}`);
     res.json({ success: true, id, sha256, expiresAt: drop.expiresAt });
@@ -157,10 +169,16 @@ app.get("/drop/:id/download", async (req, res) => {
       blobName: drop.blobName,
     });
 
-    res.setHeader("Content-Disposition", `attachment; filename="${safeFileName}"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${safeFileName}"`,
+    );
     res.setHeader("Content-Type", "application/octet-stream");
 
-    await updateDB((db) => { db[drop.id].downloads += 1; });
+    await updateDB((db) => {
+      const current = db[drop.id];
+      if (current) current.downloads += 1;
+    });
 
     await pipeline(
       Readable.fromWeb(readable as ReadableStream<Uint8Array>),
@@ -177,7 +195,8 @@ app.get("/drop/:id/download", async (req, res) => {
 app.get("/drops", (_req, res) => {
   const db = loadDB();
   const list = Object.values(db).sort(
-    (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
+    (a, b) =>
+      new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
   );
   res.json(list);
 });
